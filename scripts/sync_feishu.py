@@ -95,6 +95,20 @@ class FeishuSync:
                 {"field_name": "待办", "type": 1},  # 文本
                 {"field_name": "更新时间", "type": 5},  # 日期
             ]
+        },
+        "followups": {
+            "name": "跟进事项",
+            "fields": [
+                {"field_name": "人员", "type": 1},  # 文本
+                {"field_name": "事项", "type": 1},  # 文本
+                {"field_name": "来源日期", "type": 5},  # 日期
+                {"field_name": "状态", "type": 3, "property": {"options": [
+                    {"name": "待跟进"},
+                    {"name": "跟进中"},
+                    {"name": "已完成"}
+                ]}},
+                {"field_name": "备注", "type": 1},  # 文本
+            ]
         }
     }
 
@@ -862,6 +876,23 @@ def sync_to_feishu(syncer: FeishuSync, content_type: str, data: dict, doc_url: s
             return True
         else:
             return syncer.add_record("projects", fields) is not None
+
+    elif content_type == "followup":
+        fields = {
+            "人员": data["人员"],
+            "事项": data["事项"],
+            "来源日期": date_to_timestamp(data.get("来源日期", datetime.now().strftime("%Y-%m-%d"))),
+            "状态": data.get("状态", "待跟进"),
+            "备注": data.get("备注", ""),
+        }
+
+        # 检查是否已存在（同一人员+同一事项）
+        existing = syncer.search_record("followups", "事项", data["事项"])
+        if existing and existing.get("fields", {}).get("人员") == data["人员"]:
+            syncer.update_record("followups", existing["record_id"], fields)
+            return True
+        else:
+            return syncer.add_record("followups", fields) is not None
 
     return False
 

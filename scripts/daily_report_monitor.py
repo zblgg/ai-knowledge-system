@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 管培生日报监控脚本
-- 每天早上10点检查前一天的日报填报情况
-- 每周一早上发送上周汇总
+- 每天早上10点推送昨天的详细日报内容
+- 每周一早上推送上周汇总 + 检查跟进事项表未完成的
 """
 import requests
 import os
@@ -13,8 +13,14 @@ from collections import defaultdict
 # 配置
 FEISHU_APP_ID = os.getenv("FEISHU_APP_ID")
 FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET")
+
+# 管培生日报表
 BITABLE_TOKEN = "OHZ8bNe1GaZsTWstktkczbVSnQb"
 TABLE_ID = "tblzrv75eruK07HY"
+
+# AI知识管理多维表格（跟进事项表在这里）
+KNOWLEDGE_BITABLE_TOKEN = os.getenv("FEISHU_BITABLE_TOKEN", "WbGHbhWiTamEQ2scH8rcSrU7nyf")
+
 WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/86407aaf-b12e-4cb7-ba88-23f7e7db57eb"
 
 # 管培生名单（用户ID -> 真名）
@@ -51,7 +57,7 @@ def parse_date(date_val):
     return None
 
 
-def get_all_records(token):
+def get_all_records(token, bitable_token=BITABLE_TOKEN, table_id=TABLE_ID):
     """获取所有日报记录"""
     headers = {"Authorization": f"Bearer {token}"}
     all_records = []
@@ -62,7 +68,7 @@ def get_all_records(token):
         if page_token:
             params["page_token"] = page_token
 
-        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{BITABLE_TOKEN}/tables/{TABLE_ID}/records"
+        url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{bitable_token}/tables/{table_id}/records"
         resp = requests.get(url, headers=headers, params=params)
         data = resp.json()
 
@@ -79,9 +85,50 @@ def get_all_records(token):
     return all_records
 
 
-def check_daily_report(records, check_date):
-    """检查指定日期的填报情况"""
+def get_followups_table_id(token):
+    """获取跟进事项表的table_id"""
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{KNOWLEDGE_BITABLE_TOKEN}/tables"
+    resp = requests.get(url, headers=headers)
+    data = resp.json()
+
+    if data.get("code") == 0:
+        for table in data.get("data", {}).get("items", []):
+            if table.get("name") == "跟进事项":
+                return table.get("table_id")
+    return None
+
+
+def get_pending_followups(token):
+    """获取未完成的跟进事项"""
+    table_id = get_followups_table_id(token)
+    if not table_id:
+        return []
+
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{KNOWLEDGE_BITABLE_TOKEN}/tables/{table_id}/records"
+    resp = requests.get(url, headers=headers, params={"page_size": 100})
+    data = resp.json()
+
+    pending = []
+    if data.get("code") == 0:
+        for item in data.get("data", {}).get("items", []):
+            fields = item.get("fields", {})
+            status = fields.get("状态", "")
+            if status in ["待跟进", "跟进中"]:
+                pending.append({
+                    "人员": fields.get("人员", ""),
+                    "事项": fields.get("事项", ""),
+                    "状态": status,
+                    "来源日期": parse_date(fields.get("来源日期")),
+                })
+    return pending
+
+
+def get_daily_details(records, check_date):
+    """获取指定日期的详细日报内容"""
     filled_members = set()
+    details = []
 
     for record in records:
         fields = record.get("fields", {})
@@ -90,41 +137,77 @@ def check_daily_report(records, check_date):
 
         if record_date and record_date.date() == check_date.date():
             filled_members.add(name)
+            details.append({
+                "name": name,
+                "decision": fields.get("今日决策时刻(选1个你做过判断/选择的时刻)", "") or "",
+                "choice": fields.get("我的选择：", "") or "",
+                "result": fields.get("结果：", "") or "",
+                "problem_action": fields.get("发现的问题 + 我的行动(不要只提问题,要说你做了什么)", "") or "",
+                "need_support": fields.get("需要支持的地方(只写1个最需要的)", "") or "",
+            })
 
     missing_members = [m for m in EXPECTED_MEMBERS if m not in filled_members]
 
     return {
         "date": check_date,
         "filled": list(filled_members),
-        "missing": missing_members
+        "missing": missing_members,
+        "details": details
     }
 
 
 def send_daily_notification(result):
-    """发送每日填报提醒"""
+    """发送每日详细推送"""
     date_str = result["date"].strftime("%m月%d日")
 
+    # 构建内容
+    elements = []
+
+    # 填报状态
     if not result["missing"]:
-        content = f"**{date_str} 日报填报情况**\n\n✅ 全员已填报！\n\n已填：{', '.join(result['filled'])}"
+        status_text = f"**填报状态**\n:white_check_mark: 全员已填报：{', '.join(result['filled'])}"
         template = "green"
     else:
-        content = f"**{date_str} 日报填报情况**\n\n"
-        content += f"✅ 已填：{', '.join(result['filled']) if result['filled'] else '无'}\n\n"
-        content += f"❌ **未填**：{', '.join(result['missing'])}\n\n"
-        content += "请相关同学尽快补填日报！"
-        template = "red"
+        status_text = f"**填报状态**\n:white_check_mark: 已填：{', '.join(result['filled']) if result['filled'] else '无'}\n:x: **未填**：{', '.join(result['missing'])}"
+        template = "orange"
+
+    elements.append({"tag": "div", "text": {"tag": "lark_md", "content": status_text}})
+    elements.append({"tag": "hr"})
+
+    # 详细内容
+    for detail in result["details"]:
+        person_content = f"**{detail['name']}**\n"
+
+        if detail["decision"]:
+            person_content += f"\n:dart: **决策时刻**：{detail['decision']}"
+            if detail["choice"]:
+                person_content += f"\n   选择：{detail['choice']}"
+            if detail["result"]:
+                person_content += f"\n   结果：{detail['result']}"
+
+        if detail["problem_action"]:
+            person_content += f"\n\n:mag: **问题+行动**：{detail['problem_action']}"
+
+        if detail["need_support"]:
+            person_content += f"\n\n:raised_hand: **需要支持**：{detail['need_support']}"
+
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": person_content}})
+        elements.append({"tag": "hr"})
+
+    # 如果没有详细内容
+    if not result["details"]:
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": ":warning: 暂无详细日报内容"}})
+
+    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": f"检查时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"}]})
 
     message = {
         "msg_type": "interactive",
         "card": {
             "header": {
-                "title": {"tag": "plain_text", "content": "📋 日报填报提醒"},
+                "title": {"tag": "plain_text", "content": f"📋 {date_str} 管培生日报"},
                 "template": template
             },
-            "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": content}},
-                {"tag": "note", "elements": [{"tag": "plain_text", "content": f"检查时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"}]}
-            ]
+            "elements": elements
         }
     }
 
@@ -175,47 +258,42 @@ def generate_weekly_summary(records, week_start, week_end):
             if work_items:
                 work_summary.append(f"**{name}**\n" + "\n".join(work_items[:3]))
 
-    # 提取待解决事项
-    issues = []
-    for d in week_data:
-        support = d.get("need_support", "")
-        if support and support not in ["无", "暂无", "-", "/"]:
-            issues.append(f"• [{d['date'].strftime('%m/%d')}] {d['name']}: {support[:50]}")
-
     return {
         "week_start": week_start,
         "week_end": week_end,
         "total_reports": len(week_data),
         "fill_stats": fill_stats,
         "work_summary": work_summary,
-        "issues": issues[:5]
     }
 
 
-def send_weekly_notification(summary):
+def send_weekly_notification(summary, pending_followups):
     """发送周报汇总"""
     week_str = f"{summary['week_start'].strftime('%m/%d')} - {summary['week_end'].strftime('%m/%d')}"
 
     elements = [
         {
             "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**📊 填报统计**\n本周共 {summary['total_reports']} 条日报\n\n" + "\n".join(summary['fill_stats'])}
+            "text": {"tag": "lark_md", "content": f"**:bar_chart: 填报统计**\n本周共 {summary['total_reports']} 条日报\n\n" + "\n".join(summary['fill_stats'])}
         },
         {"tag": "hr"}
     ]
 
     # 添加工作汇总
     if summary["work_summary"]:
-        work_content = "**📝 本周工作要点**\n\n" + "\n\n".join(summary["work_summary"])
+        work_content = "**:memo: 本周工作要点**\n\n" + "\n\n".join(summary["work_summary"])
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": work_content}})
         elements.append({"tag": "hr"})
 
-    # 添加待解决事项
-    if summary["issues"]:
-        issues_content = "**🚨 待解决事项**\n" + "\n".join(summary["issues"])
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": issues_content}})
+    # 添加未完成跟进事项
+    if pending_followups:
+        followup_content = "**:rotating_light: 未完成跟进事项**\n"
+        for f in pending_followups:
+            date_str = f["来源日期"].strftime("%m/%d") if f["来源日期"] else "未知"
+            followup_content += f"\n• [{date_str}] {f['人员']}: {f['事项']} ({f['状态']})"
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": followup_content}})
 
-    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": f"由 AI知识管理同步 自动生成 | {datetime.now().strftime('%Y-%m-%d')}"}]})
+    elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": f"由 AI知识管理系统 自动生成 | {datetime.now().strftime('%Y-%m-%d')}"}]})
 
     message = {
         "msg_type": "interactive",
@@ -233,8 +311,8 @@ def send_weekly_notification(summary):
 
 
 def run_daily_check():
-    """执行每日检查"""
-    print(f"[{datetime.now()}] 执行每日填报检查...")
+    """执行每日检查 - 推送详细内容"""
+    print(f"[{datetime.now()}] 执行每日详细推送...")
 
     token = get_access_token()
     if not token:
@@ -248,7 +326,7 @@ def run_daily_check():
     yesterday = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
     print(f"检查日期：{yesterday.strftime('%Y-%m-%d')}")
 
-    result = check_daily_report(records, yesterday)
+    result = get_daily_details(records, yesterday)
     print(f"已填：{result['filled']}")
     print(f"漏填：{result['missing']}")
 
@@ -282,7 +360,12 @@ def run_weekly_summary():
     print(f"汇总周期：{last_monday.strftime('%Y-%m-%d')} 至 {last_sunday.strftime('%Y-%m-%d')}")
 
     summary = generate_weekly_summary(records, last_monday, last_sunday)
-    resp = send_weekly_notification(summary)
+
+    # 获取未完成的跟进事项
+    pending_followups = get_pending_followups(token)
+    print(f"未完成跟进事项：{len(pending_followups)} 条")
+
+    resp = send_weekly_notification(summary, pending_followups)
     print(f"通知发送结果：{resp}")
 
 
