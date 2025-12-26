@@ -290,6 +290,101 @@ class FeishuSync:
 
         return data.get("code") == 0
 
+    # ==================== 读取功能 ====================
+
+    def list_records(self, table_key: str, page_size: int = 100, filter_status: str = None) -> List[dict]:
+        """获取数据表的所有记录"""
+        table_id = self.table_ids.get(table_key)
+        if not table_id:
+            self.get_all_table_ids()
+            table_id = self.table_ids.get(table_key)
+
+        if not table_id:
+            return []
+
+        url = f"{self.BASE_URL}/bitable/v1/apps/{self.bitable_token}/tables/{table_id}/records"
+        params = {"page_size": page_size}
+
+        all_records = []
+        page_token = None
+
+        while True:
+            if page_token:
+                params["page_token"] = page_token
+
+            resp = requests.get(url, headers=self._headers(), params=params)
+            data = resp.json()
+
+            if data.get("code") != 0:
+                break
+
+            items = data.get("data", {}).get("items", [])
+            for item in items:
+                record = item.get("fields", {})
+                record["_record_id"] = item.get("record_id")
+                # 如果有状态过滤
+                if filter_status:
+                    if record.get("状态") == filter_status:
+                        all_records.append(record)
+                else:
+                    all_records.append(record)
+
+            # 检查是否有下一页
+            if not data.get("data", {}).get("has_more"):
+                break
+            page_token = data.get("data", {}).get("page_token")
+
+        return all_records
+
+    def get_pending_threads(self) -> List[dict]:
+        """获取所有待处理的线头"""
+        return self.list_records("threads", filter_status="待处理")
+
+    def get_recent_archives(self, limit: int = 5) -> List[dict]:
+        """获取最近的对话归档"""
+        records = self.list_records("archives")
+        # 按日期排序，取最近的
+        records.sort(key=lambda x: x.get("日期", 0), reverse=True)
+        return records[:limit]
+
+    def get_context_summary(self) -> dict:
+        """获取当前上下文摘要（用于对话开始时）"""
+        summary = {
+            "pending_threads": [],
+            "recent_archives": [],
+            "fetch_time": datetime.now().isoformat()
+        }
+
+        try:
+            # 获取待处理线头
+            threads = self.get_pending_threads()
+            for t in threads[:10]:  # 最多10条
+                summary["pending_threads"].append({
+                    "标题": t.get("标题", ""),
+                    "优先级": t.get("优先级", "中"),
+                    "来源": t.get("来源", "")
+                })
+
+            # 获取最近归档
+            archives = self.get_recent_archives(5)
+            for a in archives:
+                # 转换时间戳
+                date_val = a.get("日期", 0)
+                if isinstance(date_val, (int, float)) and date_val > 0:
+                    date_str = datetime.fromtimestamp(date_val / 1000).strftime("%Y-%m-%d")
+                else:
+                    date_str = str(date_val)
+
+                summary["recent_archives"].append({
+                    "日期": date_str,
+                    "主题": a.get("主题", ""),
+                    "一句话总结": a.get("一句话总结", "")
+                })
+        except Exception as e:
+            summary["error"] = str(e)
+
+        return summary
+
     # ==================== 初始化 ====================
 
     def init_bitable(self) -> bool:
