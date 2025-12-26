@@ -78,6 +78,23 @@ class FeishuSync:
                 {"field_name": "创建时间", "type": 5},  # 日期
                 {"field_name": "详情链接", "type": 15},  # 链接
             ]
+        },
+        "projects": {
+            "name": "项目状态",
+            "fields": [
+                {"field_name": "项目名", "type": 1},  # 文本
+                {"field_name": "状态", "type": 3, "property": {"options": [
+                    {"name": "运行中"},
+                    {"name": "可用"},
+                    {"name": "开发中"},
+                    {"name": "待验证"},
+                    {"name": "暂停"}
+                ]}},
+                {"field_name": "最近修改", "type": 1},  # 文本
+                {"field_name": "Git提交数", "type": 1},  # 文本
+                {"field_name": "待办", "type": 1},  # 文本
+                {"field_name": "更新时间", "type": 5},  # 日期
+            ]
         }
     }
 
@@ -614,6 +631,54 @@ def parse_archive_file(file_path: Path) -> dict:
     return result
 
 
+def parse_projects_file(file_path: Path) -> List[dict]:
+    """解析项目状态文件"""
+    content = file_path.read_text(encoding="utf-8")
+    projects = []
+
+    current_project = None
+
+    for line in content.split('\n'):
+        line_stripped = line.strip()
+
+        # 识别项目标题
+        if line_stripped.startswith('## ') and not line_stripped.startswith('## 自动') and not line_stripped.startswith('## 主动'):
+            if current_project:
+                projects.append(current_project)
+            current_project = {
+                "项目名": line_stripped[3:].strip(),
+                "状态": "-",
+                "最近修改": "-",
+                "Git提交数": "-",
+                "待办": "无"
+            }
+
+        # 解析项目属性
+        elif current_project and line_stripped.startswith('- **'):
+            if '状态' in line_stripped:
+                match = re.search(r'状态.*?：(.+)$', line_stripped)
+                if match:
+                    current_project["状态"] = match.group(1).strip()
+            elif '最近修改' in line_stripped:
+                match = re.search(r'最近修改.*?：(.+)$', line_stripped)
+                if match:
+                    current_project["最近修改"] = match.group(1).strip()
+            elif 'Git' in line_stripped:
+                match = re.search(r'Git.*?：(.+)$', line_stripped)
+                if match:
+                    current_project["Git提交数"] = match.group(1).strip()
+            elif '待办' in line_stripped:
+                match = re.search(r'待办.*?：(.+)$', line_stripped)
+                if match:
+                    current_project["待办"] = match.group(1).strip()
+
+    # 添加最后一个项目
+    if current_project:
+        projects.append(current_project)
+
+    return projects
+
+
 # ==================== 同步函数 ====================
 
 def date_to_timestamp(date_str: str) -> int:
@@ -685,6 +750,23 @@ def sync_to_feishu(syncer: FeishuSync, content_type: str, data: dict, doc_url: s
             return True
         else:
             return syncer.add_record("knowledge", fields) is not None
+
+    elif content_type == "project":
+        fields = {
+            "项目名": data["项目名"],
+            "状态": data["状态"],
+            "最近修改": data["最近修改"],
+            "Git提交数": data.get("Git提交数", "-"),
+            "待办": data.get("待办", "无"),
+            "更新时间": int(datetime.now().timestamp() * 1000),
+        }
+
+        existing = syncer.search_record("projects", "项目名", data["项目名"])
+        if existing:
+            syncer.update_record("projects", existing["record_id"], fields)
+            return True
+        else:
+            return syncer.add_record("projects", fields) is not None
 
     return False
 
