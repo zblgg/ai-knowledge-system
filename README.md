@@ -106,6 +106,61 @@ python3 sync.py --status
 或者直接对Claude说：
 > "帮我同步知识库到云端"
 
+## 手机端与电脑端协同
+
+本系统支持手机端和电脑端 Claude Code 协同工作：
+
+### 原理
+
+```
+手机 Claude Code ──归档对话──▶ 飞书多维表格 ◀──归档对话── 电脑 Claude Code
+                                    │
+                                    ▼
+                              统一查看/管理
+```
+
+### 手机端设置
+
+1. **克隆仓库**：
+   ```bash
+   git clone https://github.com/zblgg/ai-knowledge-system.git
+   cd ai-knowledge-system
+   ```
+
+2. **配置环境变量**（在 ~/.env 中添加）：
+   ```bash
+   export FEISHU_APP_ID="your_app_id"
+   export FEISHU_APP_SECRET="your_app_secret"
+   export FEISHU_BITABLE_TOKEN="your_bitable_token"
+   ```
+
+3. **使用方式**：
+   - 对话结束时说：`/archive-conversation` 归档对话
+   - 想知道之前做了什么：`/sync-context` 拉取飞书
+
+### 拉取上下文
+
+开始对话时，可以先拉取飞书状态了解之前做了什么：
+
+```bash
+cd scripts
+python3 fetch_feishu.py --context
+```
+
+输出示例：
+```
+<feishu_context>
+同步时间: 2025-12-26 21:00
+
+待处理事项:
+- [高] 完成 partner-evaluation-v2 开发 (来源: 项目规划)
+
+最近对话记录:
+- 2025-12-26: 飞书监控配置
+  摘要: 配置了知识库监控，自动推送到新群
+</feishu_context>
+```
+
 ## 快速开始
 
 1. 把这个目录加到你的常用工作区
