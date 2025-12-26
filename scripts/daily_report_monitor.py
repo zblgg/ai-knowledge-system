@@ -165,10 +165,10 @@ def send_daily_notification(result):
 
     # 填报状态
     if not result["missing"]:
-        status_text = f"**填报状态**\n:white_check_mark: 全员已填报：{', '.join(result['filled'])}"
+        status_text = f"**填报状态**\n✅ 全员已填报：{', '.join(result['filled'])}"
         template = "green"
     else:
-        status_text = f"**填报状态**\n:white_check_mark: 已填：{', '.join(result['filled']) if result['filled'] else '无'}\n:x: **未填**：{', '.join(result['missing'])}"
+        status_text = f"**填报状态**\n✅ 已填：{', '.join(result['filled']) if result['filled'] else '无'}\n❌ **未填**：{', '.join(result['missing'])}"
         template = "orange"
 
     elements.append({"tag": "div", "text": {"tag": "lark_md", "content": status_text}})
@@ -179,24 +179,24 @@ def send_daily_notification(result):
         person_content = f"**{detail['name']}**\n"
 
         if detail["decision"]:
-            person_content += f"\n:dart: **决策时刻**：{detail['decision']}"
+            person_content += f"\n🎯 **决策时刻**：{detail['decision']}"
             if detail["choice"]:
                 person_content += f"\n   选择：{detail['choice']}"
             if detail["result"]:
                 person_content += f"\n   结果：{detail['result']}"
 
         if detail["problem_action"]:
-            person_content += f"\n\n:mag: **问题+行动**：{detail['problem_action']}"
+            person_content += f"\n\n🔍 **问题+行动**：{detail['problem_action']}"
 
         if detail["need_support"]:
-            person_content += f"\n\n:raised_hand: **需要支持**：{detail['need_support']}"
+            person_content += f"\n\n🙋 **需要支持**：{detail['need_support']}"
 
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": person_content}})
         elements.append({"tag": "hr"})
 
     # 如果没有详细内容
     if not result["details"]:
-        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": ":warning: 暂无详细日报内容"}})
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": "⚠️ 暂无详细日报内容"}})
 
     elements.append({"tag": "note", "elements": [{"tag": "plain_text", "content": f"检查时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"}]})
 
@@ -274,20 +274,20 @@ def send_weekly_notification(summary, pending_followups):
     elements = [
         {
             "tag": "div",
-            "text": {"tag": "lark_md", "content": f"**:bar_chart: 填报统计**\n本周共 {summary['total_reports']} 条日报\n\n" + "\n".join(summary['fill_stats'])}
+            "text": {"tag": "lark_md", "content": f"**📊 填报统计**\n本周共 {summary['total_reports']} 条日报\n\n" + "\n".join(summary['fill_stats'])}
         },
         {"tag": "hr"}
     ]
 
     # 添加工作汇总
     if summary["work_summary"]:
-        work_content = "**:memo: 本周工作要点**\n\n" + "\n\n".join(summary["work_summary"])
+        work_content = "**📝 本周工作要点**\n\n" + "\n\n".join(summary["work_summary"])
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": work_content}})
         elements.append({"tag": "hr"})
 
     # 添加未完成跟进事项
     if pending_followups:
-        followup_content = "**:rotating_light: 未完成跟进事项**\n"
+        followup_content = "**🚨 未完成跟进事项**\n"
         for f in pending_followups:
             date_str = f["来源日期"].strftime("%m/%d") if f["来源日期"] else "未知"
             followup_content += f"\n• [{date_str}] {f['人员']}: {f['事项']} ({f['状态']})"
