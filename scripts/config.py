@@ -3,6 +3,10 @@
 """
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载环境变量（override=True 确保 ~/.env 优先）
+load_dotenv(os.path.expanduser("~/.env"), override=True)
 
 # ==================== 路径配置 ====================
 BASE_DIR = Path(__file__).parent.parent
