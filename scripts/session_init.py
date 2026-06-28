@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 # 项目根目录
-PROJECT_ROOT = Path("/Users/bolin/Downloads/Claude Code Projects")
+PROJECT_ROOT = Path("/Users/bolin/dev/Claude Code Projects")
 KNOWLEDGE_DIR = PROJECT_ROOT / "AI知识管理系统"
 
 def get_recent_progress():
